@@ -41,6 +41,16 @@
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.plist"
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "languages": ["English", "Russian"],
+        "compression": "lzma",
+        "displayLanguageSelector": true
+      }
     }
   },
   "plugins": {}

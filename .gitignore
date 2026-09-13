@@ -42,6 +42,7 @@ src-tauri/WixTools/
 
 # OpenSCAD binary bundle (downloaded at build time, ~148MB)
 apps/ui/src-tauri/binaries/OpenSCAD.app
+apps/ui/src-tauri/binaries/openscad
 
 # Jest cache
 .jest-cache/

@@ -1,11 +1,13 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
+#[cfg(target_os = "macos")]
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
+#[cfg(target_os = "macos")]
 use std::time::UNIX_EPOCH;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State};
@@ -43,48 +45,122 @@ impl Default for OpenScadBinaryState {
 
 /// Resolve the path to the OpenSCAD binary.
 /// Tries (in order):
-/// 1. Dev-mode OpenSCAD.app in src-tauri/binaries/ (preferred in dev to avoid
-///    macOS provenance attributes that Tauri's resource copy adds)
-/// 2. Bundled OpenSCAD.app resource (Tauri resource bundling — production)
+/// 1. Dev-mode binary in src-tauri/binaries/
+///    (macOS: OpenSCAD.app; Windows/Linux: openscad/ folder)
+/// 2. Bundled binary resource (Tauri resource bundling — production)
 /// 3. System-installed binary via PATH
 fn resolve_binary_path(app: &AppHandle) -> Option<PathBuf> {
-    // Dev mode: look in src-tauri/binaries/OpenSCAD.app first.
-    // Tauri copies resources to target/debug/ which adds com.apple.provenance
-    // attributes, causing macOS to SIGKILL the binary. The source in binaries/
-    // has been cleaned by the download script and is safe to run.
-    let dev_app = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join("OpenSCAD.app")
-        .join("Contents")
-        .join("MacOS")
-        .join("OpenSCAD");
-    if dev_app.exists() {
-        eprintln!("[render] Found dev OpenSCAD at {:?}", dev_app);
-        return Some(dev_app);
-    }
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
 
-    // Production: bundled as a Tauri resource at OpenSCAD.app/Contents/MacOS/OpenSCAD
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let bundled = resource_dir
+    // macOS: the native OpenSCAD ships as an .app bundle. Prefer the dev copy
+    // to avoid macOS provenance attributes that Tauri's resource copy adds.
+    #[cfg(target_os = "macos")]
+    {
+        let dev_app = base
             .join("OpenSCAD.app")
             .join("Contents")
             .join("MacOS")
             .join("OpenSCAD");
-        if bundled.exists() {
-            eprintln!("[render] Found bundled OpenSCAD at {:?}", bundled);
-            return Some(bundled);
+        if dev_app.exists() {
+            eprintln!("[render] Found dev OpenSCAD at {:?}", dev_app);
+            return Some(dev_app);
         }
     }
 
-    // Fallback: system-installed OpenSCAD via PATH
-    if let Ok(output) = Command::new("which").arg("openscad").output() {
-        if output.status.success() {
-            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path_str.is_empty() {
-                let path = PathBuf::from(&path_str);
-                if path.exists() {
-                    eprintln!("[render] Found system OpenSCAD at {:?}", path);
-                    return Some(path);
+    // Windows / Linux: a flat directory with the executable alongside its
+    // dependency DLLs / .so files (must be kept together to resolve).
+    #[cfg(not(target_os = "macos"))]
+    {
+        let exe_name = if cfg!(windows) {
+            "openscad.exe"
+        } else {
+            "openscad"
+        };
+        let dev_exe = base.join("openscad").join(exe_name);
+        if dev_exe.exists() {
+            eprintln!("[render] Found dev OpenSCAD at {:?}", dev_exe);
+            return Some(dev_exe);
+        }
+    }
+
+    // Production: bundled as a Tauri resource.
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        #[cfg(target_os = "macos")]
+        {
+            let bundled = resource_dir
+                .join("OpenSCAD.app")
+                .join("Contents")
+                .join("MacOS")
+                .join("OpenSCAD");
+            if bundled.exists() {
+                eprintln!("[render] Found bundled OpenSCAD at {:?}", bundled);
+                return Some(bundled);
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let exe_name = if cfg!(windows) {
+                "openscad.exe"
+            } else {
+                "openscad"
+            };
+            let bundled = resource_dir.join("openscad").join(exe_name);
+            if bundled.exists() {
+                eprintln!("[render] Found bundled OpenSCAD at {:?}", bundled);
+                return Some(bundled);
+            }
+        }
+    }
+
+    // Fallback: system-installed OpenSCAD via PATH.
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = Command::new("which").arg("openscad").output() {
+            if output.status.success() {
+                let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path_str.is_empty() {
+                    let path = PathBuf::from(&path_str);
+                    if path.exists() {
+                        eprintln!("[render] Found system OpenSCAD at {:?}", path);
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        // `where` is the Windows equivalent of `which`; it may list several
+        // matches, take the first resolvable one.
+        if let Ok(output) = Command::new("where").arg("openscad").output() {
+            if output.status.success() {
+                let first = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if !first.is_empty() {
+                    let path = PathBuf::from(&first);
+                    if path.exists() {
+                        eprintln!("[render] Found system OpenSCAD at {:?}", path);
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        if let Ok(output) = Command::new("which").arg("openscad").output() {
+            if output.status.success() {
+                let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path_str.is_empty() {
+                    let path = PathBuf::from(&path_str);
+                    if path.exists() {
+                        eprintln!("[render] Found system OpenSCAD at {:?}", path);
+                        return Some(path);
+                    }
                 }
             }
         }
@@ -93,6 +169,7 @@ fn resolve_binary_path(app: &AppHandle) -> Option<PathBuf> {
     None
 }
 
+#[cfg(target_os = "macos")]
 fn app_bundle_root(binary_path: &Path) -> Option<PathBuf> {
     binary_path
         .parent() // MacOS/
@@ -101,6 +178,7 @@ fn app_bundle_root(binary_path: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+#[cfg(target_os = "macos")]
 fn dev_source_app_bundle() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("binaries")
@@ -115,6 +193,7 @@ fn dev_source_app_bundle() -> PathBuf {
 /// nested app bundles (like our bundled OpenSCAD.app) retain these attributes.
 /// macOS Code Signing Monitor kills such binaries with SIGKILL (Code Signature
 /// Invalid) when they are spawned as child processes.
+#[cfg(target_os = "macos")]
 fn strip_quarantine(binary_path: &Path) {
     // Walk up from .../Contents/MacOS/OpenSCAD to the .app bundle root
     if let Some(app_bundle) = app_bundle_root(binary_path) {
@@ -145,6 +224,7 @@ fn strip_quarantine(binary_path: &Path) {
 
 /// Prepare a binary path that is safe to execute on macOS without mutating the
 /// watched source tree during `tauri dev`.
+#[cfg(target_os = "macos")]
 fn prepare_binary_for_execution(binary_path: &Path) -> Result<PathBuf, String> {
     let Some(app_bundle) = app_bundle_root(binary_path) else {
         return Ok(binary_path.to_path_buf());
@@ -214,6 +294,13 @@ fn prepare_binary_for_execution(binary_path: &Path) -> Result<PathBuf, String> {
 
     strip_quarantine(&cached_binary);
     Ok(cached_binary)
+}
+
+/// On Windows and Linux there are no quarantine/provenance extended attributes,
+/// so the binary can be executed in place — no caching or xattr munging needed.
+#[cfg(not(target_os = "macos"))]
+fn prepare_binary_for_execution(binary_path: &Path) -> Result<PathBuf, String> {
+    Ok(binary_path.to_path_buf())
 }
 
 /// Get the OpenSCAD version string from the binary.

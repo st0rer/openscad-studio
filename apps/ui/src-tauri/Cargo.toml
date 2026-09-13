@@ -13,6 +13,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# Modern release optimizations: full LTO, single codegen unit, no unwinding
+# overhead, stripped symbols, and max optimization level. Larger compile time,
+# significantly faster/more compact OpenSCAD rendering binary.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
