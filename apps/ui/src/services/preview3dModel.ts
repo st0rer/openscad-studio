@@ -152,7 +152,11 @@ function parseHeaderAndCounts(lines: string[]) {
   let countsLine = '';
   let currentLine = 0;
 
-  if (lines[0].match(/^OFF(\s|$)/)) {
+  // OFF header with counts on the same line: `OFF <vertCount> <faceCount> <edgeCount>`.
+  // Note: `\s+` (not `\s|$`) — a bare `OFF` on its own line must fall through to
+  // the branch below that reads the counts from the next line (used by
+  // OpenSCAD builds that emit the header on two lines).
+  if (/^OFF\s+/.test(lines[0])) {
     countsLine = lines[0].slice(3).trim();
     currentLine = 1;
   } else if (lines[0] === 'OFF' && lines.length > 1) {

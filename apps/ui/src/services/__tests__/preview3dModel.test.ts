@@ -5,6 +5,21 @@ import { buildPreview3dObject, parseOffPreviewModel } from '../preview3dModel';
 import { FALLBACK_PREVIEW_SCENE_STYLE } from '../previewSceneConfig';
 
 describe('parseOffPreviewModel', () => {
+  it('parses an OFF header split across two lines (OFF on its own line, counts on the next)', () => {
+    // Form emitted by OpenSCAD builds that put the counts on line 2.
+    const parsed = parseOffPreviewModel({
+      content: ['OFF', '4 1 0', '0 0 0', '1 0 0', '1 1 0', '0 1 0', '4 0 1 2 3 255 0 0'].join('\n'),
+      fallbackColor: FALLBACK_PREVIEW_SCENE_STYLE.modelColor,
+      version: 'two-line',
+    });
+
+    expect(parsed.groups).toHaveLength(1);
+    expect(parsed.groups[0].geometry.getAttribute('position').count).toBe(6);
+    expect(parsed.groups[0].color.getHexString()).toBe('ff0000');
+
+    parsed.dispose();
+  });
+
   it('parses a single colored face set into one material group', () => {
     const parsed = parseOffPreviewModel({
       content: ['OFF 4 1 0', '0 0 0', '1 0 0', '1 1 0', '0 1 0', '4 0 1 2 3 255 0 0'].join('\n'),
